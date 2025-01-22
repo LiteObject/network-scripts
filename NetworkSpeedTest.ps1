@@ -3,10 +3,10 @@
 # Client Side (Sender)
 
 # Define common parameters
-$testFileSizeMB = 10  # Size of the test file in MB
+$testFileSizeMB = 100  # Size of the test file in MB
 $testFileName = "testfile.bin"
 $bufferSize = 1MB     # Buffer size for data transfer
-$serverIP = "192.168.1.100"  # Replace with the server's IP address
+$serverIP = "192.168.7.133"  # Replace with the server's IP address
 $serverPort = 5000    # Port for communication
 
 # Function to create a test file
@@ -29,6 +29,9 @@ function Start-Server {
     $client = $null
     $stream = $null
 
+    # Initialize the buffer
+    $buffer = New-Object Byte[] $bufferSize
+
     # Loop to wait for client connection or manual exit
     while ($true) {
         if ($listener.Pending()) {
@@ -36,11 +39,14 @@ function Start-Server {
             $stream = $client.GetStream()
             $startTime = [System.Diagnostics.Stopwatch]::StartNew()
 
-            # Receive the test file
+            # Receive the test file as a stream
             $fileBytes = @()
-            while (($bytesRead = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-                $fileBytes += $buffer[0..($bytesRead - 1)]
-            }
+            do {
+                $bytesRead = $stream.Read($buffer, 0, $buffer.Length)
+                if ($bytesRead -gt 0) {
+                    $fileBytes += $buffer[0..($bytesRead - 1)]
+                }
+            } while ($bytesRead -gt 0)
 
             $elapsedTime = $startTime.Elapsed.TotalSeconds
             $fileSizeMB = $fileBytes.Length / 1MB
@@ -74,11 +80,27 @@ function Start-Client {
     $client = [System.Net.Sockets.TcpClient]::new($serverIP, $serverPort)
     $stream = $client.GetStream()
 
-    # Send the test file
-    $fileBytes = [System.IO.File]::ReadAllBytes($testFileName)
-    $stream.Write($fileBytes, 0, $fileBytes.Length)
-    Write-Host "Test file sent to server."
+    # Send the test file as a stream
+    $fileStream = [System.IO.File]::OpenRead($testFileName)
+    $buffer = New-Object Byte[] $bufferSize
+    $startTime = [System.Diagnostics.Stopwatch]::StartNew()
 
+    Write-Host "Sending test file to server..."
+
+    do {
+        $bytesRead = $fileStream.Read($buffer, 0, $buffer.Length)
+        if ($bytesRead -gt 0) {
+            $stream.Write($buffer, 0, $bytesRead)
+        }
+    } while ($bytesRead -gt 0)
+
+    $elapsedTime = $startTime.Elapsed.TotalSeconds
+    $fileSizeMB = (Get-Item $testFileName).Length / 1MB
+    $transferSpeedMBps = $fileSizeMB / $elapsedTime
+
+    Write-Host "Test file sent. Size: $fileSizeMB MB, Time: $elapsedTime seconds, Speed: $transferSpeedMBps MB/s"
+
+    $fileStream.Close()
     $stream.Close()
     $client.Close()
 }
