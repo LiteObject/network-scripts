@@ -37,6 +37,10 @@ function Start-Server {
         if ($listener.Pending()) {
             $client = $listener.AcceptTcpClient()
             $stream = $client.GetStream()
+
+            # Notify that a client has connected
+            Write-Host "Client connected: $($client.Client.RemoteEndPoint)"
+
             $startTime = [System.Diagnostics.Stopwatch]::StartNew()
 
             # Receive the test file as a stream
@@ -56,6 +60,7 @@ function Start-Server {
 
             $stream.Close()
             $client.Close()
+            Write-Host "Client disconnected."
         }
 
         # Check for key press to exit
