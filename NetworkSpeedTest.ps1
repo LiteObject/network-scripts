@@ -24,26 +24,49 @@ function Start-Server {
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, $serverPort)
     $listener.Start()
     Write-Host "Server started. Waiting for client connection..."
+    Write-Host "Press 'Q' to stop the server."
 
-    $client = $listener.AcceptTcpClient()
-    $stream = $client.GetStream()
-    $startTime = [System.Diagnostics.Stopwatch]::StartNew()
+    $client = $null
+    $stream = $null
 
-    # Receive the test file
-    $fileBytes = @()
-    while (($bytesRead = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-        $fileBytes += $buffer[0..($bytesRead - 1)]
+    # Loop to wait for client connection or manual exit
+    while ($true) {
+        if ($listener.Pending()) {
+            $client = $listener.AcceptTcpClient()
+            $stream = $client.GetStream()
+            $startTime = [System.Diagnostics.Stopwatch]::StartNew()
+
+            # Receive the test file
+            $fileBytes = @()
+            while (($bytesRead = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $fileBytes += $buffer[0..($bytesRead - 1)]
+            }
+
+            $elapsedTime = $startTime.Elapsed.TotalSeconds
+            $fileSizeMB = $fileBytes.Length / 1MB
+            $transferSpeedMBps = $fileSizeMB / $elapsedTime
+
+            Write-Host "File received. Size: $fileSizeMB MB, Time: $elapsedTime seconds, Speed: $transferSpeedMBps MB/s"
+
+            $stream.Close()
+            $client.Close()
+        }
+
+        # Check for key press to exit
+        if ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq [ConsoleKey]::Q) {
+                Write-Host "Stopping server..."
+                break
+            }
+        }
+
+        # Small delay to avoid high CPU usage
+        Start-Sleep -Milliseconds 100
     }
 
-    $elapsedTime = $startTime.Elapsed.TotalSeconds
-    $fileSizeMB = $fileBytes.Length / 1MB
-    $transferSpeedMBps = $fileSizeMB / $elapsedTime
-
-    Write-Host "File received. Size: $fileSizeMB MB, Time: $elapsedTime seconds, Speed: $transferSpeedMBps MB/s"
-
-    $stream.Close()
-    $client.Close()
     $listener.Stop()
+    Write-Host "Server stopped."
 }
 
 # Function to start the client (sender)
