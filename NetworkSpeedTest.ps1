@@ -21,93 +21,130 @@ function Create-TestFile {
 
 # Function to start the server (receiver)
 function Start-Server {
-    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, $serverPort)
-    $listener.Start()
-    Write-Host "Server started. Waiting for client connection..."
-    Write-Host "Press 'Q' to stop the server."
+    try {
+        # Create and start the TCP listener
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, $serverPort)
+        $listener.Start()
+        Write-Host "Server started on port $serverPort. Waiting for client connection..."
+        Write-Host "Press 'Q' to stop the server."
 
-    $client = $null
-    $stream = $null
+        $client = $null
+        $stream = $null
 
-    # Initialize the buffer
-    $buffer = New-Object Byte[] $bufferSize
+        # Initialize the buffer
+        $buffer = New-Object Byte[] $bufferSize
 
-    # Loop to wait for client connection or manual exit
-    while ($true) {
-        if ($listener.Pending()) {
-            $client = $listener.AcceptTcpClient()
-            $stream = $client.GetStream()
+        # Loop to wait for client connection or manual exit
+        while ($true) {
+            if ($listener.Pending()) {
+                $client = $listener.AcceptTcpClient()
+                $stream = $client.GetStream()
 
-            # Notify that a client has connected
-            Write-Host "Client connected: $($client.Client.RemoteEndPoint)"
+                # Notify that a client has connected
+                Write-Host "Client connected: $($client.Client.RemoteEndPoint)"
 
-            $startTime = [System.Diagnostics.Stopwatch]::StartNew()
+                $startTime = [System.Diagnostics.Stopwatch]::StartNew()
 
-            # Receive the test file as a stream
-            $fileBytes = @()
-            do {
-                $bytesRead = $stream.Read($buffer, 0, $buffer.Length)
-                if ($bytesRead -gt 0) {
-                    $fileBytes += $buffer[0..($bytesRead - 1)]
-                }
-            } while ($bytesRead -gt 0)
+                # Receive the test file as a stream
+                $fileBytes = @()
+                $totalBytesRead = 0
+                $fileSizeBytes = $testFileSizeMB * 1MB  # Expected file size in bytes
 
-            $elapsedTime = $startTime.Elapsed.TotalSeconds
-            $fileSizeMB = $fileBytes.Length / 1MB
-            $transferSpeedMBps = $fileSizeMB / $elapsedTime
+                do {
+                    $bytesRead = $stream.Read($buffer, 0, $buffer.Length)
+                    if ($bytesRead -gt 0) {
+                        $fileBytes += $buffer[0..($bytesRead - 1)]
+                        $totalBytesRead += $bytesRead
 
-            Write-Host "File received. Size: $fileSizeMB MB, Time: $elapsedTime seconds, Speed: $transferSpeedMBps MB/s"
+                        # Calculate progress percentage
+                        $progress = [math]::Round(($totalBytesRead / $fileSizeBytes) * 100, 2)
 
-            $stream.Close()
-            $client.Close()
-            Write-Host "Client disconnected."
-        }
+                        # Display progress on the console
+                        Write-Progress -Activity "Receiving file" -Status "$progress% Complete" -PercentComplete $progress
+                    }
+                } while ($bytesRead -gt 0)
 
-        # Check for key press to exit
-        if ([Console]::KeyAvailable) {
-            $key = [Console]::ReadKey($true)
-            if ($key.Key -eq [ConsoleKey]::Q) {
-                Write-Host "Stopping server..."
-                break
+                $elapsedTime = $startTime.Elapsed.TotalSeconds
+                $fileSizeMB = $fileBytes.Length / 1MB
+                $transferSpeedMBps = $fileSizeMB / $elapsedTime
+
+                Write-Host "File received. Size: $fileSizeMB MB, Time: $elapsedTime seconds, Speed: $transferSpeedMBps MB/s"
+
+                $stream.Close()
+                $client.Close()
+                Write-Host "Client disconnected."
             }
+
+            # Check for key press to exit
+            if ([Console]::KeyAvailable) {
+                $key = [Console]::ReadKey($true)
+                if ($key.Key -eq [ConsoleKey]::Q) {
+                    Write-Host "Stopping server..."
+                    break
+                }
+            }
+
+            # Small delay to avoid high CPU usage
+            Start-Sleep -Milliseconds 100
         }
-
-        # Small delay to avoid high CPU usage
-        Start-Sleep -Milliseconds 100
+    } catch {
+        Write-Error "An error occurred: $_"
+    } finally {
+        # Ensure the listener is stopped
+        if ($listener -and $listener.Server.IsBound) {
+            $listener.Stop()
+            Write-Host "Server stopped."
+        }
     }
-
-    $listener.Stop()
-    Write-Host "Server stopped."
 }
 
 # Function to start the client (sender)
 function Start-Client {
-    $client = [System.Net.Sockets.TcpClient]::new($serverIP, $serverPort)
-    $stream = $client.GetStream()
+    try {
+        # Create a TCP client and connect to the server
+        $client = [System.Net.Sockets.TcpClient]::new($serverIP, $serverPort)
+        $stream = $client.GetStream()
 
-    # Send the test file as a stream
-    $fileStream = [System.IO.File]::OpenRead($testFileName)
-    $buffer = New-Object Byte[] $bufferSize
-    $startTime = [System.Diagnostics.Stopwatch]::StartNew()
+        # Open the test file for reading
+        $fileStream = [System.IO.File]::OpenRead($testFileName)
+        $buffer = New-Object Byte[] $bufferSize
+        $startTime = [System.Diagnostics.Stopwatch]::StartNew()
 
-    Write-Host "Sending test file to server..."
+        # Get the total file size
+        $fileSizeBytes = $fileStream.Length
+        $totalBytesSent = 0
 
-    do {
-        $bytesRead = $fileStream.Read($buffer, 0, $buffer.Length)
-        if ($bytesRead -gt 0) {
-            $stream.Write($buffer, 0, $bytesRead)
-        }
-    } while ($bytesRead -gt 0)
+        Write-Host "Sending test file to server..."
 
-    $elapsedTime = $startTime.Elapsed.TotalSeconds
-    $fileSizeMB = (Get-Item $testFileName).Length / 1MB
-    $transferSpeedMBps = $fileSizeMB / $elapsedTime
+        # Send the file in chunks and display progress
+        do {
+            $bytesRead = $fileStream.Read($buffer, 0, $buffer.Length)
+            if ($bytesRead -gt 0) {
+                $stream.Write($buffer, 0, $bytesRead)
+                $totalBytesSent += $bytesRead
 
-    Write-Host "Test file sent. Size: $fileSizeMB MB, Time: $elapsedTime seconds, Speed: $transferSpeedMBps MB/s"
+                # Calculate progress percentage
+                $progress = [math]::Round(($totalBytesSent / $fileSizeBytes) * 100, 2)
 
-    $fileStream.Close()
-    $stream.Close()
-    $client.Close()
+                # Display progress on the console
+                Write-Progress -Activity "Sending file" -Status "$progress% Complete" -PercentComplete $progress
+            }
+        } while ($bytesRead -gt 0)
+
+        # Calculate transfer speed
+        $elapsedTime = $startTime.Elapsed.TotalSeconds
+        $fileSizeMB = $fileSizeBytes / 1MB
+        $transferSpeedMBps = $fileSizeMB / $elapsedTime
+
+        Write-Host "Test file sent. Size: $fileSizeMB MB, Time: $elapsedTime seconds, Speed: $transferSpeedMBps MB/s"
+    } catch {
+        Write-Error "An error occurred: $_"
+    } finally {
+        # Close the file stream and network stream
+        if ($fileStream) { $fileStream.Close() }
+        if ($stream) { $stream.Close() }
+        if ($client) { $client.Close() }
+    }
 }
 
 # Main script logic
